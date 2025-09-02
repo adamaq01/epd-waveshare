@@ -250,7 +250,7 @@ where
         for color in color_7 {
             for _ in 0..20000 {
                 self.interface
-                    .data(spi, &[SixColor::colors_byte(*color, *color)])?;
+                    .data(spi, &[SixColor::colors_byte(color, color)])?;
             }
         }
 
