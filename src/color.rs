@@ -68,6 +68,24 @@ pub enum OctColor {
     HiZ = 0x07,
 }
 
+/// For the 6 Color Displays
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SixColor {
+    /// Black Color
+    Black = 0x00,
+    /// White Color
+    #[default]
+    White = 0x01,
+    /// Green Color
+    Green = 0x02,
+    /// Blue Color
+    Blue = 0x03,
+    /// Red Color
+    Red = 0x04,
+    /// Yellow Color
+    Yellow = 0x05,
+}
+
 /// Color trait for use in `Display`s
 pub trait ColorType {
     /// Number of bit used to represent this color type in a single buffer.
@@ -119,6 +137,121 @@ impl ColorType for TriColor {
                     (bit as u16) << 8 | bit as u16
                 },
             ),
+        }
+    }
+}
+
+impl ColorType for SixColor {
+    const BITS_PER_PIXEL_PER_BUFFER: usize = 4;
+    const BUFFER_COUNT: usize = 1;
+    fn bitmask(&self, _bwrbit: bool, pos: u32) -> (u8, u16) {
+        let mask = !(0xF0 >> ((pos % 2) * 4));
+        let bits = self.get_nibble() as u16;
+        (mask, if pos % 2 == 1 { bits } else { bits << 4 })
+    }
+}
+
+#[cfg(feature = "graphics")]
+impl From<BinaryColor> for SixColor {
+    fn from(b: BinaryColor) -> SixColor {
+        match b {
+            BinaryColor::On => SixColor::Black,
+            BinaryColor::Off => SixColor::White,
+        }
+    }
+}
+
+#[cfg(feature = "graphics")]
+impl From<SixColor> for embedded_graphics_core::pixelcolor::Rgb888 {
+    fn from(b: SixColor) -> Self {
+        let (r, g, b) = b.rgb();
+        Self::new(r, g, b)
+    }
+}
+
+#[cfg(feature = "graphics")]
+impl From<embedded_graphics_core::pixelcolor::Rgb888> for SixColor {
+    fn from(p: embedded_graphics_core::pixelcolor::Rgb888) -> SixColor {
+        use embedded_graphics_core::prelude::RgbColor;
+        let colors = [
+            SixColor::Black,
+            SixColor::White,
+            SixColor::Green,
+            SixColor::Blue,
+            SixColor::Red,
+            SixColor::Yellow,
+        ];
+        // if the user has already mapped to the right color space, it will just be in the list
+        if let Some(found) = colors.iter().find(|c| c.rgb() == (p.r(), p.g(), p.b())) {
+            return *found;
+        }
+
+        // This is not ideal but just pick the nearest color
+        *colors
+            .iter()
+            .map(|c| (c, c.rgb()))
+            .map(|(c, (r, g, b))| {
+                let dist = (i32::from(r) - i32::from(p.r())).pow(2)
+                    + (i32::from(g) - i32::from(p.g())).pow(2)
+                    + (i32::from(b) - i32::from(p.b())).pow(2);
+                (c, dist)
+            })
+            .min_by_key(|(_c, dist)| *dist)
+            .map(|(c, _)| c)
+            .unwrap_or(&SixColor::White)
+    }
+}
+
+#[cfg(feature = "graphics")]
+impl From<embedded_graphics_core::pixelcolor::raw::RawU4> for SixColor {
+    fn from(b: embedded_graphics_core::pixelcolor::raw::RawU4) -> Self {
+        use embedded_graphics_core::prelude::RawData;
+        SixColor::from_nibble(b.into_inner()).unwrap()
+    }
+}
+
+#[cfg(feature = "graphics")]
+impl PixelColor for SixColor {
+    type Raw = embedded_graphics_core::pixelcolor::raw::RawU4;
+}
+
+impl SixColor {
+    /// Gets the Nibble representation of the Color as needed by the display
+    pub fn get_nibble(self) -> u8 {
+        self as u8
+    }
+    /// Converts two colors into a single byte for the Display
+    pub fn colors_byte(a: SixColor, b: SixColor) -> u8 {
+        a.get_nibble() << 4 | b.get_nibble()
+    }
+
+    ///Take the nibble (lower 4 bits) and convert to an OctColor if possible
+    pub fn from_nibble(nibble: u8) -> Result<SixColor, OutOfColorRangeParseError> {
+        match nibble & 0xf {
+            0x00 => Ok(SixColor::Black),
+            0x01 => Ok(SixColor::White),
+            0x02 => Ok(SixColor::Green),
+            0x03 => Ok(SixColor::Blue),
+            0x04 => Ok(SixColor::Red),
+            0x05 => Ok(SixColor::Yellow),
+            e => Err(OutOfColorRangeParseError(e)),
+        }
+    }
+    ///Split the nibbles of a single byte and convert both to an OctColor if possible
+    pub fn split_byte(byte: u8) -> Result<(SixColor, SixColor), OutOfColorRangeParseError> {
+        let low = SixColor::from_nibble(byte & 0xf)?;
+        let high = SixColor::from_nibble((byte >> 4) & 0xf)?;
+        Ok((high, low))
+    }
+    /// Converts to limited range of RGB values.
+    pub fn rgb(self) -> (u8, u8, u8) {
+        match self {
+            SixColor::White => (0xff, 0xff, 0xff),
+            SixColor::Black => (0x00, 0x00, 0x00),
+            SixColor::Green => (0x00, 0xff, 0x00),
+            SixColor::Blue => (0x00, 0x00, 0xff),
+            SixColor::Red => (0xff, 0x00, 0x00),
+            SixColor::Yellow => (0xff, 0xff, 0x00),
         }
     }
 }
@@ -526,6 +659,16 @@ mod tests {
         let right = OctColor::Green;
         assert_eq!(
             OctColor::split_byte(OctColor::colors_byte(left, right)),
+            Ok((left, right))
+        );
+    }
+
+    #[test]
+    fn test_six() {
+        let left = SixColor::Red;
+        let right = SixColor::Green;
+        assert_eq!(
+            SixColor::split_byte(SixColor::colors_byte(left, right)),
             Ok((left, right))
         );
     }
